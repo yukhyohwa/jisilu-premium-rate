@@ -31,8 +31,8 @@
             const cells = Array.from(row.querySelectorAll('td, th'));
             const texts = cells.map(c => c.innerText.trim());
 
-            // LOF 找"净值"或"基金净值"；QDII 找"T-2净值"
-            const hasNav = texts.some(t => t === '基金净值' || t === '净值' || t.includes('T-2净值'));
+            // LOF 找"净值"或"基金净值"；QDII 找"T-2净值"或"T-1净值"
+            const hasNav = texts.some(t => t === '基金净值' || t === '净值' || t.includes('T-2净值') || t.includes('T-1净值'));
             if (hasNav) {
                 headerRow = row;
                 headerCells = cells;
@@ -52,7 +52,7 @@
             const txt = td.innerText.trim();
             if (txt.includes('现价') || txt.includes('最新价')) priceIdx = i;
             if (txt === '基金净值' || txt === '净值') navIdx = i;
-            if (txt.includes('T-2净值')) navIdx = i;      // QDII
+            if (txt.includes('T-2净值') || txt.includes('T-1净值')) navIdx = i;      // QDII
             if (txt.includes('T-1指数涨幅') || txt.includes('指数涨幅')) indexChangeIdx = i; // QDII
             if (txt.includes('实时估值') || txt.includes('估值')) estIdx = i;
         });
@@ -65,9 +65,9 @@
         if (!headerRow.getAttribute(MARK)) {
             const refTh = headerCells[navIdx];
             const newTh = doc.createElement(refTh.tagName);
-            newTh.innerText = isQDII ? '折溢价率(估)' : '折溢价率';
-            newTh.title = isQDII
-                ? '(现价 - T-2净值×(1+T-1涨幅)) / T-2净值×(1+T-1涨幅) × 100%'
+            newTh.innerText = (isQDII && indexChangeIdx !== -1) ? '折溢价率(估)' : '折溢价率';
+            newTh.title = (isQDII && indexChangeIdx !== -1)
+                ? '(现价 - 净值×(1+T-1涨幅)) / 净值×(1+T-1涨幅) × 100%'
                 : '(现价 - 净值) / 净值 × 100%';
             newTh.style.cssText = 'background:#154360;color:#fff;font-weight:bold;padding:3px 8px;text-align:center;white-space:nowrap;border:1px solid #999;';
             refTh.after(newTh);
@@ -98,8 +98,8 @@
 
             let estimatedNav = null;
 
-            if (isQDII && nav !== null) {
-                // QDII: 用 T-2净值 × (1 + T-1指数涨幅%) 估算净值
+            if (isQDII && nav !== null && indexChangeIdx !== -1) {
+                // QDII: 用净值 × (1 + T-1指数涨幅%) 估算净值
                 const indexChange = getNum(indexChangeIdx);
                 if (indexChange !== null) {
                     estimatedNav = nav * (1 + indexChange / 100);
