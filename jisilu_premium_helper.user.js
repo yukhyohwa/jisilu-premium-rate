@@ -23,27 +23,25 @@
         const allRows = Array.from(doc.querySelectorAll('tr'));
         if (allRows.length === 0) return false;
 
-        // ===== 找表头行 =====
-        let headerRow = null;
-        let headerCells = [];
-
-        for (const row of allRows) {
+        // ===== 找所有可能的表头行 (处理粘性表头等多个表头的情况) =====
+        const headerRows = [];
+        allRows.forEach(row => {
             const cells = Array.from(row.querySelectorAll('td, th'));
             const texts = cells.map(c => c.innerText.trim());
-
-            // LOF 找"净值"或"基金净值"；QDII 找"T-2净值"或"T-1净值"
             const hasNav = texts.some(t => t === '基金净值' || t === '净值' || t.includes('T-2净值') || t.includes('T-1净值'));
             if (hasNav) {
-                headerRow = row;
-                headerCells = cells;
-                break;
+                headerRows.push({ row, cells });
             }
-        }
+        });
 
-        if (!headerRow) {
-            console.log('[v2.3] 未找到表头行');
+        if (headerRows.length === 0) {
+            console.log('[v2.5] 未找到表头行');
             return false;
         }
+
+        // 使用第一个找到的表头作为主参考
+        const mainHeader = headerRows[0];
+        const headerCells = mainHeader.cells;
 
         // ===== 定位列索引 =====
         let priceIdx = -1, navIdx = -1, indexChangeIdx = -1, estIdx = -1;
@@ -61,30 +59,46 @@
 
         if (priceIdx === -1 || navIdx === -1) return false;
 
-        // ===== 插入表头新列（仅一次）=====
-        if (!headerRow.getAttribute(MARK)) {
-            const refTh = headerCells[navIdx];
-            const newTh = doc.createElement(refTh.tagName);
-            newTh.innerText = (isQDII && indexChangeIdx !== -1) ? '折溢价率(估)' : '折溢价率';
-            newTh.title = (isQDII && indexChangeIdx !== -1)
-                ? '(现价 - 净值×(1+T-1涨幅)) / 净值×(1+T-1涨幅) × 100%'
-                : '(现价 - 净值) / 净值 × 100%';
-            newTh.style.cssText = 'background:#154360;color:#fff;font-weight:bold;padding:3px 8px;text-align:center;white-space:nowrap;border:1px solid #999;';
-            refTh.after(newTh);
-            headerRow.setAttribute(MARK, '1');
-            console.log('[v2.3] 表头列已插入');
-        }
+        // ===== 插入表头新列 (遍历所有找到的表头行) =====
+        headerRows.forEach(h => {
+            if (!h.row.getAttribute(MARK)) {
+                // 重新定位该行内的索引，以防不同表头结构有微调
+                let localNavIdx = -1;
+                const localCells = Array.from(h.row.querySelectorAll('td, th'));
+                localCells.forEach((td, i) => {
+                    const txt = td.innerText.trim();
+                    if (txt === '基金净值' || txt === '净值' || txt.includes('T-2净值') || txt.includes('T-1净值')) localNavIdx = i;
+                });
+
+                if (localNavIdx !== -1) {
+                    const refTh = localCells[localNavIdx];
+                    const newTh = doc.createElement(refTh.tagName);
+                    newTh.innerText = (isQDII && indexChangeIdx !== -1) ? '折溢价率(估)' : '折溢价率';
+                    newTh.title = (isQDII && indexChangeIdx !== -1)
+                        ? '(现价 - 净值×(1+T-1涨幅)) / 净值×(1+T-1涨幅) × 100%'
+                        : '(现价 - 净值) / 净值 × 100%';
+                    newTh.style.cssText = 'background:#154360;color:#fff;font-weight:bold;padding:3px 8px;text-align:center;white-space:nowrap;border:1px solid #999;';
+                    refTh.after(newTh);
+                    h.row.setAttribute(MARK, '1');
+                }
+            }
+        });
 
         // ===== 遍历数据行，插入计算值 =====
-        const headerRowIdx = allRows.indexOf(headerRow);
+        // 根据第一个表头的位置计算偏离
+        const mainHeaderIdx = allRows.indexOf(mainHeader.row);
         let count = 0;
 
-        for (let r = headerRowIdx + 1; r < allRows.length; r++) {
+        for (let r = 0; r < allRows.length; r++) {
             const row = allRows[r];
+            // 排除表头行和已经插入的行
+            if (headerRows.some(h => h.row === row)) continue;
             if (row.getAttribute(MARK)) continue;
 
             const tds = row.querySelectorAll('td');
+            // 数据行必须有一定的列数，且 navIdx 对应的列必须存在内容（过滤广告或空行）
             if (tds.length <= Math.max(priceIdx, navIdx)) continue;
+            if (tds[navIdx].innerText.trim() === '') continue;
 
             const getNum = (idx) => {
                 if (idx < 0 || !tds[idx]) return null;
